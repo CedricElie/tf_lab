@@ -20,8 +20,8 @@ initialize_backend:
     which terraform || { echo "ERROR: Terraform not found in PATH. Aborting."; exit 1; }
     which gcloud || { echo "ERROR: Google Cloud CLI not found in PATH. Aborting."; exit 1; }
     
-    # Authentication (GCP_SA_KEY_FILE must be a File variable in GitLab)
-    echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
+    # 💥 FIX: Use 'cat' to write the File variable content reliably
+    cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
     gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     rm $GCP_SA_KEY_FILE_PATH
     
@@ -42,7 +42,7 @@ validate_syntax:
     - initialize_backend
   script: |
     # Authentication
-    echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
+    cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
     gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     rm $GCP_SA_KEY_FILE_PATH
     cd $TF_ROOT
@@ -60,7 +60,7 @@ create_plan:
     - validate_syntax
   script: |
     # Authentication
-    echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
+    cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
     gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     rm $GCP_SA_KEY_FILE_PATH
     cd $TF_ROOT
@@ -84,7 +84,7 @@ deploy_infrastructure:
     - create_plan
   script: |
     # Authentication
-    echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
+    cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
     gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     rm $GCP_SA_KEY_FILE_PATH
     cd $TF_ROOT
@@ -102,7 +102,7 @@ destroy_resources:
     - shared
   script: |
     # Authentication
-    echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
+    cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
     gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     rm $GCP_SA_KEY_FILE_PATH
     cd $TF_ROOT
@@ -113,6 +113,6 @@ destroy_resources:
     # Destruction Command
     echo "****************************************************************"
     echo "** WARNING: This will permanently destroy ALL managed resources. **"
-    echo "****************************************************************"
+    ****************************************************************"
     terraform destroy -auto-approve
   when: manual
