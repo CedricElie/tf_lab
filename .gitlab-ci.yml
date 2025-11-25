@@ -6,8 +6,6 @@ variables:
   TF_ROOT: .
   GIT_STRATEGY: clone
   GCP_SA_KEY_FILE_PATH: /tmp/gcp-sa-key.json 
-  # Use CI_DEFAULT_BRANCH for clarity (usually main or master)
-  DEFAULT_BRANCH: $CI_DEFAULT_BRANCH 
 
 # Define the stages of the pipeline
 stages:
@@ -19,97 +17,116 @@ stages:
 
 ---
 
-# --- Global Job Template ---
-# All jobs inherit the runner tag
-.shared_tags_template:
-  tags:
-    - shared
+## 🔑 Stage: init (Guaranteed Visibility)
 
-# --- Authentication and Init Script Template ---
-# Contains the setup logic that runs before *most* jobs
-.auth_and_init_script:
-  before_script:
-    # Check if required binaries are in the PATH
-    - which terraform || { echo "ERROR: Terraform not found in PATH. Aborting."; exit 1; }
-    - which gcloud || { echo "ERROR: Google Cloud CLI not found in PATH. Aborting."; exit 1; }
-    
-    # 1. Authenticate to Google Cloud
-    - echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
-    - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
-    - rm $GCP_SA_KEY_FILE_PATH # Remove key file after use for security
-    
-    # 2. Navigate to the TF root and initialize
-    - cd $TF_ROOT
-    - terraform init
-
----
-
-## 🔑 Stage: init (Visible Job)
-
-# This job ensures pipeline visibility and performs mandatory setup.
+# This job initializes Terraform and ensures the pipeline is always visible.
 init:
-  extends: .shared_tags_template
   stage: init
+  tags:
+    - shared # Explicitly assign the shared runner tag
   script:
-    # These checks ensure basic tools are available
+    # Tool Checks
     - which terraform || { echo "ERROR: Terraform not found in PATH. Aborting."; exit 1; }
     - which gcloud || { echo "ERROR: Google Cloud CLI not found in PATH. Aborting."; exit 1; }
+    
+    # Initialization
     - cd $TF_ROOT
-    - terraform init # Initializes providers and backend state
+    - terraform init 
+  # CRITICAL FIX: 'when: always' guarantees this job is scheduled, resolving the error.
+  rules:
+    - when: always 
 
 ---
 
 ## 🔒 Stage: validate
 
 validate:
-  extends: 
-    - .shared_tags_template
-    - .auth_and_init_script # Inherit auth and init setup
   stage: validate
+  tags:
+    - shared
   needs:
-    - init 
+    - init # Must run after init completes
+  before_script:
+    # 1. Authentication (GCP_SA_KEY_FILE must be a File variable in GitLab)
+    - echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
+    - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
+    - rm $GCP_SA_KEY_FILE_PATH
+    # 2. Navigate and re-init (if necessary, though main init handles provider download)
+    - cd $TF_ROOT
   script:
     - terraform validate
+  rules:
+    - when: on_success # Runs automatically if 'init' succeeds
 
 ---
 
 ## 📝 Stage: plan
 
 plan:
-  extends: 
-    - .shared_tags_template
-    - .auth_and_init_script
   stage: plan
+  tags:
+    - shared
   needs:
     - validate
+  before_script:
+    # Authentication (as required for every job)
+    - echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
+    - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
+    - rm $GCP_SA_KEY_FILE_PATH
+    - cd $TF_ROOT
   script:
     - terraform plan -out=plan.tfplan
   artifacts:
     paths:
       - $TF_ROOT/plan.tfplan
     expire_in: 1 day
+  rules:
+    - when: on_success # Runs automatically if 'validate' succeeds
 
 ---
 
 ## ✅ Stage: apply
 
 apply:
-  extends: 
-    - .shared_tags_template
-    - .auth_and_init_script
   stage: apply
+  tags:
+    - shared
   needs:
     - plan
+  before_script:
+    # Authentication (as required for every job)
+    - echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
+    - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
+    - rm $GCP_SA_KEY_FILE_PATH
+    - cd $TF_ROOT
   script:
     - terraform apply -auto-approve plan.tfplan
+  # Rule: Only run automatically on the 'main' branch
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" 
+      when: on_success 
+    - when: never # Prevents running on feature branches
+
 ---
 
 ## 🗑️ Stage: destroy (Manual)
 
 destroy:
-  extends: 
-    - .shared_tags_template
-    - .auth_and_init_script
   stage: destroy
-  # Requires manual trigger
-  when: manual 
+  tags:
+    - shared
+  before_script:
+    # Authentication (as required for every job)
+    - echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
+    - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
+    - rm $GCP_SA_KEY_FILE_PATH
+    - cd $TF_ROOT
+  script:
+    - echo "****************************************************************"
+    - echo "** WARNING: This will permanently destroy ALL managed resources. **"
+    - echo "****************************************************************"
+    - terraform destroy -auto-approve
+  when: manual # Requires manual trigger
+  rules:
+    # Only allow the manual button to appear on the 'main' branch
+    - if: $CI_COMMIT_BRANCH == "main"
