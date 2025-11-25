@@ -56,9 +56,6 @@ init:
     - which gcloud || { echo "ERROR: Google Cloud CLI not found in PATH. Aborting."; exit 1; }
     - cd $TF_ROOT
     - terraform init # Initializes providers and backend state
-  # RULE SIMPLIFICATION: This job runs automatically on all branches/tags.
-  rules:
-    - when: on_success # Always run automatically
 
 ---
 
@@ -73,8 +70,6 @@ validate:
     - init 
   script:
     - terraform validate
-  rules:
-    - when: on_success # Always run automatically
 
 ---
 
@@ -93,8 +88,6 @@ plan:
     paths:
       - $TF_ROOT/plan.tfplan
     expire_in: 1 day
-  rules:
-    - when: on_success # Always run automatically
 
 ---
 
@@ -109,12 +102,6 @@ apply:
     - plan
   script:
     - terraform apply -auto-approve plan.tfplan
-  # Only run apply on the default branch (where plan.tfplan is applied)
-  rules:
-    - if: $CI_COMMIT_BRANCH == $DEFAULT_BRANCH 
-      when: on_success # Run automatically
-    - when: never # Do not run on feature branches
-
 ---
 
 ## 🗑️ Stage: destroy (Manual)
@@ -126,6 +113,3 @@ destroy:
   stage: destroy
   # Requires manual trigger
   when: manual 
-  rules:
-    # Only allow the manual button to appear on the default branch
-    - if: $CI_COMMIT_BRANCH == $DEFAULT_BRANCH
