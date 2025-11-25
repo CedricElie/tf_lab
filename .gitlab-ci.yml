@@ -6,10 +6,12 @@ variables:
   TF_ROOT: .
   GIT_STRATEGY: clone
   GCP_SA_KEY_FILE_PATH: /tmp/gcp-sa-key.json 
+  # Use CI_DEFAULT_BRANCH for clarity (usually main or master)
+  DEFAULT_BRANCH: $CI_DEFAULT_BRANCH 
 
 # Define the stages of the pipeline
 stages:
-  - init       # New Stage for mandatory setup
+  - init
   - validate
   - plan
   - apply
@@ -18,15 +20,16 @@ stages:
 ---
 
 # --- Global Job Template ---
+# All jobs inherit the runner tag
 .shared_tags_template:
   tags:
     - shared
-    
-# --- Authentication and Init Template ---
-# This template handles the necessary authentication and setup for jobs that need it.
+
+# --- Authentication and Init Script Template ---
+# Contains the setup logic that runs before *most* jobs
 .auth_and_init_script:
-  # Check if required binaries are in the PATH
   before_script:
+    # Check if required binaries are in the PATH
     - which terraform || { echo "ERROR: Terraform not found in PATH. Aborting."; exit 1; }
     - which gcloud || { echo "ERROR: Google Cloud CLI not found in PATH. Aborting."; exit 1; }
     
@@ -35,46 +38,48 @@ stages:
     - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     - rm $GCP_SA_KEY_FILE_PATH # Remove key file after use for security
     
-    # 2. Navigate to the TF root
+    # 2. Navigate to the TF root and initialize
     - cd $TF_ROOT
-    
-    # 3. Initialize Terraform (can be skipped if 'init' stage handles it)
     - terraform init
 
 ---
 
-## 🔑 Stage: Init (The Mandatory, Visible Job)
+## 🔑 Stage: init (Visible Job)
 
-# This job ensures the pipeline is visible and sets up the project.
+# This job ensures pipeline visibility and performs mandatory setup.
 init:
-  extends: .shared_tags_template # Use the shared tags
+  extends: .shared_tags_template
   stage: init
   script:
+    # These checks ensure basic tools are available
     - which terraform || { echo "ERROR: Terraform not found in PATH. Aborting."; exit 1; }
     - which gcloud || { echo "ERROR: Google Cloud CLI not found in PATH. Aborting."; exit 1; }
     - cd $TF_ROOT
-    - terraform init
+    - terraform init # Initializes providers and backend state
+  # RULE SIMPLIFICATION: This job runs automatically on all branches/tags.
+  rules:
+    - when: on_success # Always run automatically
 
 ---
 
-## 🔒 Stage: Validate
+## 🔒 Stage: validate
 
-# The 'validate' job ensures configuration syntax is correct.
 validate:
   extends: 
     - .shared_tags_template
-    - .auth_and_init_script # Inherit auth/init before_script
+    - .auth_and_init_script # Inherit auth and init setup
   stage: validate
   needs:
-    - init # Ensure init runs first
+    - init 
   script:
     - terraform validate
+  rules:
+    - when: on_success # Always run automatically
 
 ---
 
-## 📝 Stage: Plan
+## 📝 Stage: plan
 
-# The 'plan' job creates an execution plan and saves it as an artifact.
 plan:
   extends: 
     - .shared_tags_template
@@ -89,14 +94,12 @@ plan:
       - $TF_ROOT/plan.tfplan
     expire_in: 1 day
   rules:
-    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - when: on_success # Always run automatically
 
 ---
 
-## ✅ Stage: Apply
+## ✅ Stage: apply
 
-# The 'apply' job executes the saved plan.
 apply:
   extends: 
     - .shared_tags_template
@@ -106,24 +109,23 @@ apply:
     - plan
   script:
     - terraform apply -auto-approve plan.tfplan
+  # Only run apply on the default branch (where plan.tfplan is applied)
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH == $DEFAULT_BRANCH 
+      when: on_success # Run automatically
+    - when: never # Do not run on feature branches
 
 ---
 
-## 🗑️ Stage: Destroy (Manual)
+## 🗑️ Stage: destroy (Manual)
 
-# The 'destroy' job removes the infrastructure.
 destroy:
   extends: 
     - .shared_tags_template
     - .auth_and_init_script
   stage: destroy
+  # Requires manual trigger
   when: manual 
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH 
-  script:
-    - echo "****************************************************************"
-    - echo "** WARNING: This will permanently destroy ALL managed resources. **"
-    - echo "****************************************************************"
-    - terraform destroy -auto-approve
+    # Only allow the manual button to appear on the default branch
+    - if: $CI_COMMIT_BRANCH == $DEFAULT_BRANCH
