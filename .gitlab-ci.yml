@@ -1,0 +1,27 @@
+include:
+- project: 'gitlab-org/gitlab'
+  file: '/lib/gitlab/ci/templates/Terraform/Base.gitlab-ci.yml'
+  ref: 'v17.0.0-ee'
+- project: 'gitlab-org/gitlab'
+  file: '/lib/gitlab/ci/templates/Jobs/SAST-IaC.gitlab-ci.yml'
+  ref: 'v17.0.0-ee"
+stages:
+ - validate
+ - test
+ - build
+ - deploy
+ - cleanup
+fmt:
+ extends: .terraform:fmt
+ needs: []
+validate:
+ extends: .terraform:validate
+ needs: []
+build:
+ extends: .terraform:build
+deploy:
+ extends: .terraform:deploy
+ dependencies:
+   - build
+ environment:
+   name: $TF_STATE_NAME
