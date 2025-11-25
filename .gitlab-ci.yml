@@ -1,24 +1,16 @@
-# --- Configuration Details ---
-# 1. Runs on the Shell Executor with tag: 'shared'.
-# 2. Uses single multi-line string (pipe |) for scripts to prevent common YAML errors.
-# 3. Job 'initialize_backend' uses 'when: always' to guarantee pipeline visibility.
-# 4. Jobs run automatically in order, except for 'destroy_resources'.
-
 variables:
   TF_ROOT: .
   GIT_STRATEGY: clone
   GCP_SA_KEY_FILE_PATH: /tmp/gcp-sa-key.json 
 
-# Define the new, descriptive stages of the pipeline
 stages:
-  - tf_setup       # Initialization and Authentication
-  - tf_check       # Validation and Planning
-  - tf_execution   # Apply
-  - tf_cleanup     # Destroy
+  - tf_setup
+  - tf_check
+  - tf_execution
+  - tf_cleanup
 
 ## 🔑 Stage: tf_setup
 
-# Job: initialize_backend
 initialize_backend:
   stage: tf_setup
   tags:
@@ -37,7 +29,7 @@ initialize_backend:
     cd $TF_ROOT
     terraform init 
   rules:
-    - when: always # Guarantees this job runs and the pipeline is visible
+    - when: always
 
 ## 🔒 Stage: tf_check
 
@@ -49,11 +41,14 @@ validate_syntax:
   needs:
     - initialize_backend
   script: |
-    # Authentication (must be repeated for each job)
+    # Authentication
     echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
     gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     rm $GCP_SA_KEY_FILE_PATH
     cd $TF_ROOT
+    
+    # Re-initialize to ensure provider is available
+    terraform init
     terraform validate
 
 # Job: create_plan
@@ -69,6 +64,9 @@ create_plan:
     gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     rm $GCP_SA_KEY_FILE_PATH
     cd $TF_ROOT
+    
+    # Re-initialize
+    terraform init
     terraform plan -out=plan.tfplan
   artifacts:
     paths:
@@ -90,6 +88,9 @@ deploy_infrastructure:
     gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     rm $GCP_SA_KEY_FILE_PATH
     cd $TF_ROOT
+    
+    # Re-initialize
+    terraform init
     terraform apply -auto-approve plan.tfplan
 
 ## 🗑️ Stage: tf_cleanup
@@ -106,9 +107,12 @@ destroy_resources:
     rm $GCP_SA_KEY_FILE_PATH
     cd $TF_ROOT
     
+    # Re-initialize
+    terraform init
+    
     # Destruction Command
     echo "****************************************************************"
     echo "** WARNING: This will permanently destroy ALL managed resources. **"
     echo "****************************************************************"
     terraform destroy -auto-approve
-  when: manual # Requires manual click to run
+  when: manual
