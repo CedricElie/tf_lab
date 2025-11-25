@@ -17,13 +17,13 @@ stages:
 
 ---
 
-## 🔑 Stage: init (Guaranteed Visibility)
+## 🔑 Stage: init (Runs Automatically)
 
-# This job initializes Terraform and ensures the pipeline is always visible.
+# This job initializes Terraform.
 init:
   stage: init
   tags:
-    - shared # Explicitly assign the shared runner tag
+    - shared
   script:
     # Tool Checks
     - which terraform || { echo "ERROR: Terraform not found in PATH. Aborting."; exit 1; }
@@ -32,13 +32,10 @@ init:
     # Initialization
     - cd $TF_ROOT
     - terraform init 
-  # CRITICAL FIX: 'when: always' guarantees this job is scheduled, resolving the error.
-  rules:
-    - when: always 
 
 ---
 
-## 🔒 Stage: validate
+## 🔒 Stage: validate (Runs Automatically)
 
 validate:
   stage: validate
@@ -47,20 +44,18 @@ validate:
   needs:
     - init # Must run after init completes
   before_script:
-    # 1. Authentication (GCP_SA_KEY_FILE must be a File variable in GitLab)
+    # 1. Authentication (GCP_SA_KEY_FILE must be a File variable)
     - echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
     - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     - rm $GCP_SA_KEY_FILE_PATH
-    # 2. Navigate and re-init (if necessary, though main init handles provider download)
+    # 2. Navigate
     - cd $TF_ROOT
   script:
     - terraform validate
-  rules:
-    - when: on_success # Runs automatically if 'init' succeeds
 
 ---
 
-## 📝 Stage: plan
+## 📝 Stage: plan (Runs Automatically)
 
 plan:
   stage: plan
@@ -69,7 +64,7 @@ plan:
   needs:
     - validate
   before_script:
-    # Authentication (as required for every job)
+    # Authentication
     - echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
     - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     - rm $GCP_SA_KEY_FILE_PATH
@@ -80,12 +75,10 @@ plan:
     paths:
       - $TF_ROOT/plan.tfplan
     expire_in: 1 day
-  rules:
-    - when: on_success # Runs automatically if 'validate' succeeds
 
 ---
 
-## ✅ Stage: apply
+## ✅ Stage: apply (Runs Automatically on ALL Branches)
 
 apply:
   stage: apply
@@ -94,18 +87,13 @@ apply:
   needs:
     - plan
   before_script:
-    # Authentication (as required for every job)
+    # Authentication
     - echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
     - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     - rm $GCP_SA_KEY_FILE_PATH
     - cd $TF_ROOT
   script:
     - terraform apply -auto-approve plan.tfplan
-  # Rule: Only run automatically on the 'main' branch
-  rules:
-    - if: $CI_COMMIT_BRANCH == "main" 
-      when: on_success 
-    - when: never # Prevents running on feature branches
 
 ---
 
@@ -116,7 +104,7 @@ destroy:
   tags:
     - shared
   before_script:
-    # Authentication (as required for every job)
+    # Authentication
     - echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
     - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     - rm $GCP_SA_KEY_FILE_PATH
@@ -126,7 +114,4 @@ destroy:
     - echo "** WARNING: This will permanently destroy ALL managed resources. **"
     - echo "****************************************************************"
     - terraform destroy -auto-approve
-  when: manual # Requires manual trigger
-  rules:
-    # Only allow the manual button to appear on the 'main' branch
-    - if: $CI_COMMIT_BRANCH == "main"
+  when: manual # Explicitly manual trigger
