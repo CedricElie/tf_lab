@@ -20,14 +20,19 @@ initialize_backend:
     which terraform || { echo "ERROR: Terraform not found in PATH. Aborting."; exit 1; }
     which gcloud || { echo "ERROR: Google Cloud CLI not found in PATH. Aborting."; exit 1; }
     
-    # 💥 FIX: Use 'cat' to write the File variable content reliably
+    # Authentication (Writes the key to a file)
     cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
     gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
-    rm $GCP_SA_KEY_FILE_PATH
+    
+    # 💥 CRITICAL FIX 1: Set GOOGLE_APPLICATION_CREDENTIALS for Terraform
+    export GOOGLE_APPLICATION_CREDENTIALS=$GCP_SA_KEY_FILE_PATH
     
     # Initialization
     cd $TF_ROOT
     terraform init 
+    
+    # Cleanup (Removes the key file)
+    rm $GCP_SA_KEY_FILE_PATH
   rules:
     - when: always
 
@@ -43,13 +48,18 @@ validate_syntax:
   script: |
     # Authentication
     cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
+    
+    # 💥 CRITICAL FIX 2: Set GOOGLE_APPLICATION_CREDENTIALS
+    export GOOGLE_APPLICATION_CREDENTIALS=$GCP_SA_KEY_FILE_PATH
+    
     gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
-    rm $GCP_SA_KEY_FILE_PATH
     cd $TF_ROOT
     
-    # Re-initialize to ensure provider is available
     terraform init
     terraform validate
+    
+    # Cleanup
+    rm $GCP_SA_KEY_FILE_PATH
 
 # Job: create_plan
 create_plan:
@@ -61,13 +71,18 @@ create_plan:
   script: |
     # Authentication
     cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
+    
+    # 💥 CRITICAL FIX 3: Set GOOGLE_APPLICATION_CREDENTIALS
+    export GOOGLE_APPLICATION_CREDENTIALS=$GCP_SA_KEY_FILE_PATH
+    
     gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
-    rm $GCP_SA_KEY_FILE_PATH
     cd $TF_ROOT
     
-    # Re-initialize
     terraform init
     terraform plan -out=plan.tfplan
+    
+    # Cleanup
+    rm $GCP_SA_KEY_FILE_PATH
   artifacts:
     paths:
       - $TF_ROOT/plan.tfplan
@@ -85,13 +100,18 @@ deploy_infrastructure:
   script: |
     # Authentication
     cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
+    
+    # 💥 CRITICAL FIX 4: Set GOOGLE_APPLICATION_CREDENTIALS
+    export GOOGLE_APPLICATION_CREDENTIALS=$GCP_SA_KEY_FILE_PATH
+    
     gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
-    rm $GCP_SA_KEY_FILE_PATH
     cd $TF_ROOT
     
-    # Re-initialize
     terraform init
     terraform apply -auto-approve plan.tfplan
+    
+    # Cleanup
+    rm $GCP_SA_KEY_FILE_PATH
 
 ## 🗑️ Stage: tf_cleanup
 
@@ -103,16 +123,21 @@ destroy_resources:
   script: |
     # Authentication
     cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
+    
+    # 💥 CRITICAL FIX 5: Set GOOGLE_APPLICATION_CREDENTIALS
+    export GOOGLE_APPLICATION_CREDENTIALS=$GCP_SA_KEY_FILE_PATH
+    
     gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
-    rm $GCP_SA_KEY_FILE_PATH
     cd $TF_ROOT
     
-    # Re-initialize
     terraform init
     
     # Destruction Command
     echo "****************************************************************"
     echo "** WARNING: This will permanently destroy ALL managed resources. **"
-    ****************************************************************"
+    echo "****************************************************************"
     terraform destroy -auto-approve
+    
+    # Cleanup
+    rm $GCP_SA_KEY_FILE_PATH
   when: manual
