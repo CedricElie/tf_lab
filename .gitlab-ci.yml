@@ -1,13 +1,11 @@
 # --- Shell Executor Configuration ---
-# DO NOT include an 'image' keyword when using a Shell Executor.
+# Since you have removed rules, all jobs run automatically except 'destroy'.
 
-# Define global variables
 variables:
   TF_ROOT: .
   GIT_STRATEGY: clone
   GCP_SA_KEY_FILE_PATH: /tmp/gcp-sa-key.json 
 
-# Define the stages of the pipeline
 stages:
   - init
   - validate
@@ -17,45 +15,47 @@ stages:
 
 ---
 
-## 🔑 Stage: init (Runs Automatically)
+## 🔑 Stage: init (Guaranteed Visibility)
 
-# This job initializes Terraform.
 init:
   stage: init
   tags:
     - shared
   script:
-    # Tool Checks
+    # 1. Tool Checks (Essential for Shell Executor)
     - which terraform || { echo "ERROR: Terraform not found in PATH. Aborting."; exit 1; }
     - which gcloud || { echo "ERROR: Google Cloud CLI not found in PATH. Aborting."; exit 1; }
     
-    # Initialization
+    # 2. Authentication (Necessary for 'terraform init' if using remote GCS backend)
+    - echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
+    - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
+    - rm $GCP_SA_KEY_FILE_PATH
+    
+    # 3. Initialization
     - cd $TF_ROOT
     - terraform init 
 
 ---
 
-## 🔒 Stage: validate (Runs Automatically)
+## 🔒 Stage: validate
 
 validate:
   stage: validate
   tags:
     - shared
   needs:
-    - init # Must run after init completes
-  before_script:
-    # 1. Authentication (GCP_SA_KEY_FILE must be a File variable)
+    - init 
+  script:
+    # Authentication must be repeated here since 'before_script' was removed
     - echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
     - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     - rm $GCP_SA_KEY_FILE_PATH
-    # 2. Navigate
     - cd $TF_ROOT
-  script:
     - terraform validate
 
 ---
 
-## 📝 Stage: plan (Runs Automatically)
+## 📝 Stage: plan
 
 plan:
   stage: plan
@@ -63,13 +63,12 @@ plan:
     - shared
   needs:
     - validate
-  before_script:
-    # Authentication
+  script:
+    # Authentication (repeated)
     - echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
     - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     - rm $GCP_SA_KEY_FILE_PATH
     - cd $TF_ROOT
-  script:
     - terraform plan -out=plan.tfplan
   artifacts:
     paths:
@@ -86,13 +85,12 @@ apply:
     - shared
   needs:
     - plan
-  before_script:
-    # Authentication
+  script:
+    # Authentication (repeated)
     - echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
     - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     - rm $GCP_SA_KEY_FILE_PATH
     - cd $TF_ROOT
-  script:
     - terraform apply -auto-approve plan.tfplan
 
 ---
@@ -103,15 +101,14 @@ destroy:
   stage: destroy
   tags:
     - shared
-  before_script:
-    # Authentication
+  script:
+    # Authentication (repeated)
     - echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
     - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     - rm $GCP_SA_KEY_FILE_PATH
     - cd $TF_ROOT
-  script:
     - echo "****************************************************************"
     - echo "** WARNING: This will permanently destroy ALL managed resources. **"
     - echo "****************************************************************"
     - terraform destroy -auto-approve
-  when: manual # Explicitly manual trigger
+  when: manual
