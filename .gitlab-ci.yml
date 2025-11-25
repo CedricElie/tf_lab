@@ -1,52 +1,69 @@
 # --- Shell Executor Configuration ---
-# REMOVE the 'image' line. Shell executors use the host machine environment.
-# image: hashicorp/terraform:latest
+# DO NOT include an 'image' keyword when using a Shell Executor.
+# The runner uses the host machine's environment.
 
 # Define global variables
 variables:
+  # Set the path to your Terraform configuration files
   TF_ROOT: .
   GIT_STRATEGY: clone
+  # Define the CI/CD variable holding your GCP Service Account JSON key
+  # This variable MUST be configured as a **File** type in GitLab.
+  GCP_SA_KEY_FILE_PATH: /tmp/gcp-sa-key.json 
 
 # Define the stages of the pipeline
 stages:
   - validate
   - plan
   - apply
-  - destroy # Added destroy stage
+  - destroy
 
-# --- Common Job Configuration for Shell Executor ---
-# All jobs will use this tag to target your specific runner
+---
+
+# --- Common Job Configuration Template ---
+# This template ensures all main jobs share the same authentication, runner tags,
+# dependency checks, and Terraform initialization steps.
 .shell_executor_template:
+  # 1. Target the specific runner instance
   tags:
     - shared
-  # For Shell Executors, you must ensure 'terraform' and 'gcloud'
-  # are available in the runner's PATH.
-  before_script:
-    - which terraform || { echo "Terraform not found in PATH on runner 'shared'. Aborting."; exit 1; }
-    - which gcloud || { echo "Google Cloud CLI not found in PATH on runner 'shared'. Aborting."; exit 1; }
     
-    # 1. Authenticate to Google Cloud (using a file variable)
-    # This block is moved to a 'before_script' for all main jobs
-    # to ensure authentication is performed before any Terraform command.
-    - echo "$GCP_SA_KEY_FILE" > /tmp/key.json
-    - gcloud auth activate-service-account --key-file=/tmp/key.json
-    - rm /tmp/key.json # Remove key file after use for security
+  # 2. Ensure necessary tools are installed and authenticate before every job
+  before_script:
+    # Check if required binaries are in the PATH
+    - which terraform || { echo "ERROR: Terraform not found in PATH on runner 'shared'. Aborting."; exit 1; }
+    - which gcloud || { echo "ERROR: Google Cloud CLI not found in PATH on runner 'shared'. Aborting."; exit 1; }
+    
+    # Authenticate to Google Cloud using the Service Account Key File variable
+    - echo "$GCP_SA_KEY_FILE" > $GCP_SA_KEY_FILE_PATH
+    - gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
+    - rm $GCP_SA_KEY_FILE_PATH # Remove key file after use for security
+    
+    # Navigate to the TF root and initialize
     - cd $TF_ROOT
     - terraform init
 
-# --- Pipeline Jobs ---
+---
 
-# The 'validate' job checks the configuration syntax
+## 🔒 Stage: Validate
+
+# The 'validate' job ensures configuration syntax is correct.
 validate:
   extends: .shell_executor_template
   stage: validate
   script:
     - terraform validate
 
-# The 'plan' job creates an execution plan, which is stored as an artifact
+---
+
+## 📝 Stage: Plan
+
+# The 'plan' job creates an execution plan and saves it as an artifact.
 plan:
   extends: .shell_executor_template
   stage: plan
+  needs:
+    - validate
   script:
     # Run the plan and save it to a file
     - terraform plan -out=plan.tfplan
@@ -54,34 +71,44 @@ plan:
     paths:
       - $TF_ROOT/plan.tfplan
     expire_in: 1 day
-  # Only run plan on non-main branches or merge requests
+  # Plan runs on all branches and MRs
   rules:
     - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
-# The 'apply' job executes the plan
+---
+
+## ✅ Stage: Apply
+
+# The 'apply' job executes the saved plan.
 apply:
   extends: .shell_executor_template
   stage: apply
   needs:
     - plan
   script:
-    # Apply the saved plan
+    # Apply the saved plan, using auto-approve since we planned it
     - terraform apply -auto-approve plan.tfplan
-  # Only run apply on the main branch
+  # Apply only runs on the main branch
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
-# --- Optional: Manual Infrastructure Destruction ---
+---
 
-# The 'destroy' job removes the infrastructure
+## 🗑️ Stage: Destroy (Manual)
+
+# The 'destroy' job removes the infrastructure. It is manual and restricted.
 destroy:
   extends: .shell_executor_template
   stage: destroy
-  when: manual # Requires manual click to run
+  # Requires a manual button click in the pipeline UI to run
+  when: manual 
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH # Only allow destroy from the main branch
+    # Only allow the manual button to appear on the default (main/master) branch
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH 
   script:
-    - echo "WARNING: Running terraform destroy will permanently remove ALL managed resources."
+    - echo "****************************************************************"
+    - echo "** WARNING: This will permanently destroy ALL managed resources. **"
+    - echo "****************************************************************"
     # The 'before_script' handles init and auth
     - terraform destroy -auto-approve
