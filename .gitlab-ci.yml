@@ -9,10 +9,15 @@ stages:
   - tf_execution
   - tf_cleanup
 
-## 🔑 Stage: tf_setup
+# --- Global Cache Configuration ---
+cache:
+  key: ${CI_COMMIT_REF_SLUG} # Cache keyed by branch/tag name
+  paths:
+    - ${TF_ROOT}/.terraform/ # Cache the providers and backend config
 
-initialize_backend:
-  stage: tf_setup
+# --- Common Setup Template ---
+# This block handles authentication and initialization, which will be repeated.
+.terraform_setup:
   tags:
     - shared
   script: |
@@ -20,42 +25,45 @@ initialize_backend:
     which terraform || { echo "ERROR: Terraform not found in PATH. Aborting."; exit 1; }
     which gcloud || { echo "ERROR: Google Cloud CLI not found in PATH. Aborting."; exit 1; }
     
-    # Authentication (Writes the key to a file)
+    # 1. Authentication (Writes the key to a file)
     cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
-    gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
     
-    # 💥 CRITICAL FIX 1: Set GOOGLE_APPLICATION_CREDENTIALS for Terraform
+    # 2. Set GOOGLE_APPLICATION_CREDENTIALS for Terraform
     export GOOGLE_APPLICATION_CREDENTIALS=$GCP_SA_KEY_FILE_PATH
     
-    # Initialization
+    gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
+    
+    # 3. Initialization and Change Directory
     cd $TF_ROOT
-    terraform init 
+    terraform init -backend=true # Ensure backend is explicitly initialized
+    
+    # Run the main command defined by the extending job
+    # The commands below this line will be defined in the 'extends' job
+
+# 🔑 Stage: tf_setup
+
+initialize_backend:
+  extends: .terraform_setup
+  stage: tf_setup
+  script: |
+    # Inherits all setup commands from .terraform_setup
     
     # Cleanup (Removes the key file)
     rm $GCP_SA_KEY_FILE_PATH
   rules:
     - when: always
 
-## 🔒 Stage: tf_check
+# 🔒 Stage: tf_check
 
 # Job: validate_syntax
 validate_syntax:
+  extends: .terraform_setup
   stage: tf_check
-  tags:
-    - shared
   needs:
     - initialize_backend
   script: |
-    # Authentication
-    cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
+    # Inherits all setup commands from .terraform_setup
     
-    # 💥 CRITICAL FIX 2: Set GOOGLE_APPLICATION_CREDENTIALS
-    export GOOGLE_APPLICATION_CREDENTIALS=$GCP_SA_KEY_FILE_PATH
-    
-    gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
-    cd $TF_ROOT
-    
-    terraform init
     terraform validate
     
     # Cleanup
@@ -63,74 +71,47 @@ validate_syntax:
 
 # Job: create_plan
 create_plan:
+  extends: .terraform_setup
   stage: tf_check
-  tags:
-    - shared
   needs:
     - validate_syntax
   script: |
-    # Authentication
-    cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
+    # Inherits all setup commands from .terraform_setup
     
-    # 💥 CRITICAL FIX 3: Set GOOGLE_APPLICATION_CREDENTIALS
-    export GOOGLE_APPLICATION_CREDENTIALS=$GCP_SA_KEY_FILE_PATH
-    
-    gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
-    cd $TF_ROOT
-    
-    terraform init
     terraform plan -out=plan.tfplan
     
     # Cleanup
     rm $GCP_SA_KEY_FILE_PATH
+  # Artifact the plan file for the apply job to consume
   artifacts:
     paths:
       - $TF_ROOT/plan.tfplan
     expire_in: 1 day
 
-## ✅ Stage: tf_execution
+# ✅ Stage: tf_execution
 
 # Job: deploy_infrastructure
 deploy_infrastructure:
+  extends: .terraform_setup
   stage: tf_execution
-  tags:
-    - shared
   needs:
     - create_plan
   script: |
-    # Authentication
-    cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
+    # Inherits all setup commands from .terraform_setup
     
-    # 💥 CRITICAL FIX 4: Set GOOGLE_APPLICATION_CREDENTIALS
-    export GOOGLE_APPLICATION_CREDENTIALS=$GCP_SA_KEY_FILE_PATH
-    
-    gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
-    cd $TF_ROOT
-    
-    terraform init
     terraform apply -auto-approve plan.tfplan
     
     # Cleanup
     rm $GCP_SA_KEY_FILE_PATH
 
-## 🗑️ Stage: tf_cleanup
+# 🗑️ Stage: tf_cleanup
 
 # Job: destroy_resources
 destroy_resources:
+  extends: .terraform_setup
   stage: tf_cleanup
-  tags:
-    - shared
   script: |
-    # Authentication
-    cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
-    
-    # 💥 CRITICAL FIX 5: Set GOOGLE_APPLICATION_CREDENTIALS
-    export GOOGLE_APPLICATION_CREDENTIALS=$GCP_SA_KEY_FILE_PATH
-    
-    gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
-    cd $TF_ROOT
-    
-    terraform init
+    # Inherits all setup commands from .terraform_setup
     
     # Destruction Command
     echo "****************************************************************"
