@@ -19,5 +19,5 @@ variable "zone" {
 variable "vpc_name" {
   type        = string
   description = "GCP VPC Name"
-  default     = "terraform-network"
+  default     = "vpc-network-tf"
 }
