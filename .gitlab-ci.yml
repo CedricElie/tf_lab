@@ -11,16 +11,15 @@ stages:
 
 # --- Global Cache Configuration ---
 cache:
-  key: ${CI_COMMIT_REF_SLUG} # Cache keyed by branch/tag name
+  key: ${CI_COMMIT_REF_SLUG}
   paths:
-    - ${TF_ROOT}/.terraform/ # Cache the providers and backend config
+    - ${TF_ROOT}/.terraform/
 
 # --- Common Setup Template ---
-# This block handles authentication and initialization, which will be repeated.
 .terraform_setup:
   tags:
     - shared
-  script: |
+  before_script: | # Use before_script for setup common to ALL jobs
     # Tool Checks
     which terraform || { echo "ERROR: Terraform not found in PATH. Aborting."; exit 1; }
     which gcloud || { echo "ERROR: Google Cloud CLI not found in PATH. Aborting."; exit 1; }
@@ -35,21 +34,19 @@ cache:
     
     # 3. Initialization and Change Directory
     cd $TF_ROOT
-    terraform init -backend=true # Ensure backend is explicitly initialized
-    
-    # Run the main command defined by the extending job
-    # The commands below this line will be defined in the 'extends' job
+    terraform init -backend=true
+
+  after_script: | # Use after_script for cleanup, making it tolerant
+    # Cleanup: Use 'rm -f' to suppress error if file is already gone
+    rm -f $GCP_SA_KEY_FILE_PATH 
 
 # 🔑 Stage: tf_setup
 
 initialize_backend:
   extends: .terraform_setup
   stage: tf_setup
-  script: |
-    # Inherits all setup commands from .terraform_setup
-    
-    # Cleanup (Removes the key file)
-    rm $GCP_SA_KEY_FILE_PATH
+  script:
+    - echo "Terraform backend initialized and providers downloaded."
   rules:
     - when: always
 
@@ -61,13 +58,8 @@ validate_syntax:
   stage: tf_check
   needs:
     - initialize_backend
-  script: |
-    # Inherits all setup commands from .terraform_setup
-    
-    terraform validate
-    
-    # Cleanup
-    rm $GCP_SA_KEY_FILE_PATH
+  script:
+    - terraform validate
 
 # Job: create_plan
 create_plan:
@@ -75,14 +67,8 @@ create_plan:
   stage: tf_check
   needs:
     - validate_syntax
-  script: |
-    # Inherits all setup commands from .terraform_setup
-    
-    terraform plan -out=plan.tfplan
-    
-    # Cleanup
-    rm $GCP_SA_KEY_FILE_PATH
-  # Artifact the plan file for the apply job to consume
+  script:
+    - terraform plan -out=plan.tfplan
   artifacts:
     paths:
       - $TF_ROOT/plan.tfplan
@@ -96,13 +82,8 @@ deploy_infrastructure:
   stage: tf_execution
   needs:
     - create_plan
-  script: |
-    # Inherits all setup commands from .terraform_setup
-    
-    terraform apply -auto-approve plan.tfplan
-    
-    # Cleanup
-    rm $GCP_SA_KEY_FILE_PATH
+  script:
+    - terraform apply -auto-approve plan.tfplan
 
 # 🗑️ Stage: tf_cleanup
 
@@ -111,14 +92,9 @@ destroy_resources:
   extends: .terraform_setup
   stage: tf_cleanup
   script: |
-    # Inherits all setup commands from .terraform_setup
-    
     # Destruction Command
     echo "****************************************************************"
     echo "** WARNING: This will permanently destroy ALL managed resources. **"
     echo "****************************************************************"
     terraform destroy -auto-approve
-    
-    # Cleanup
-    rm $GCP_SA_KEY_FILE_PATH
   when: manual
