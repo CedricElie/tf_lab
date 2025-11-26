@@ -5,6 +5,10 @@ terraform {
       version = "6.8.0"
     }
   }
+  backend "gcs" {
+    bucket = "ocp-on-gcp-476018-tfstate"
+    prefix = "tfstate/"
+  }
 }
 
 provider "google" {
