@@ -17,24 +17,17 @@ cache:
 
 # --- Common Setup Template ---
 .terraform_setup:
+  image: hashicorp/terraform:1.5.6
   tags:
     - shared
-  before_script: | # Use before_script for setup common to ALL jobs
-    # Tool Checks
-    which terraform || { echo "ERROR: Terraform not found in PATH. Aborting."; exit 1; }
-    which gcloud || { echo "ERROR: Google Cloud CLI not found in PATH. Aborting."; exit 1; }
-    
-    # 1. Authentication (Writes the key to a file)
-    cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
-    
-    # 2. Set GOOGLE_APPLICATION_CREDENTIALS for Terraform
-    export GOOGLE_APPLICATION_CREDENTIALS=$GCP_SA_KEY_FILE_PATH
-    
-    gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
-    
-    # 3. Initialization and Change Directory
+  before_script: | # Use before_script for setup common to ALL jobs that need terraform
+    set -euo pipefail
+    echo "==> PATH: $PATH"
+    terraform -version || { echo "Terraform not found in PATH. Aborting."; exit 1; }
+    # Configure workspace
     cd $TF_ROOT
-    # NOTE: `terraform init` runs in jobs that require it.
+    # Authentication is only relevant for jobs that need to use gcloud; those jobs
+    # (like ensure_backend_exists) override with an image that includes gcloud.
 
   after_script: | # Use after_script for cleanup, making it tolerant
     # Cleanup: Use 'rm -f' to suppress error if file is already gone
@@ -44,14 +37,25 @@ cache:
 
 # Job: Ensure GCS backend exists before running Terraform init
 ensure_backend_exists:
+  image: google/cloud-sdk:slim
   extends: .terraform_setup
   stage: tf_setup
-  before_script: | # Run normal setup steps but don't init here
-    which terraform || { echo "ERROR: Terraform not found in PATH. Aborting."; exit 1; }
+  before_script: | # Run steps to prepare Cloud SDK and Terraform when using Cloud SDK image
+    set -euo pipefail
     which gcloud || { echo "ERROR: Google Cloud CLI not found in PATH. Aborting."; exit 1; }
-    cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
-    export GOOGLE_APPLICATION_CREDENTIALS=$GCP_SA_KEY_FILE_PATH
-    gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
+    # 1. Authentication (Writes the key to a file)
+    cat "$GCP_SA_KEY_FILE" > "$GCP_SA_KEY_FILE_PATH"
+    export GOOGLE_APPLICATION_CREDENTIALS="$GCP_SA_KEY_FILE_PATH"
+    gcloud auth activate-service-account --key-file="$GCP_SA_KEY_FILE_PATH"
+    # 2. Install terraform if not present
+    if ! command -v terraform >/dev/null; then
+      echo "Terraform not found - installing..."
+      apt-get update && apt-get install -y unzip curl gnupg
+      TERRAFORM_VERSION=1.5.6
+      curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip" -o /tmp/terraform.zip
+      unzip /tmp/terraform.zip -d /usr/local/bin
+      terraform -version
+    fi
     cd $TF_ROOT
   script:
     - set -euo pipefail
@@ -87,7 +91,8 @@ initialize_backend:
     - ensure_backend_exists
   script:
     - echo "Initialize Terraform backend and providers"
-    - terraform init -backend=true
+    - terraform -version
+    - terraform init -backend=true -input=false
   rules:
     - when: always
 
