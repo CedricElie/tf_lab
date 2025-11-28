@@ -27,9 +27,11 @@ from GitLab CI.
 
 - Network: `google_compute_network.vpc_network` named by variable `vpc_name`.
 - Storage: `google_storage_bucket.static` named by variable `bucket_name`.
-- Note: The GCS backend (used by Terraform for state) is external and must
-  already exist. The backend is configured to use the `ocp-on-gcp-476018-tfstate`
-  bucket with prefix `tfstate/`.
+* Note: The GCS backend (used by Terraform for state) is external and must
+  be present before Terraform runs. The backend is configured to use the
+  `ocp-on-gcp-476018-tfstate` bucket with prefix `tfstate/`.
+  The GitLab CI pipeline includes a job that will attempt to create the
+  backend bucket (if it doesn't exist) before `terraform init` runs.
 
 ---
 
@@ -108,8 +110,11 @@ instead of storing a long-lived JSON key in the CI variables.
 
 ## Recommendations / Best Practices
 
-- Make sure the backend bucket (`ocp-on-gcp-476018-tfstate`) already exists.
-  Terraform cannot create the backend in the same configuration that uses it.
+- GitLab pipeline: The CI will try to create the backend bucket if missing.
+  Ensure the service account used by CI has `roles/storage.admin` (or
+  equivalent) so it can create the bucket and set uniform access.
+  If you prefer not to let the pipeline create the bucket, create it manually
+  or enforce a policy that restricts who can create backend buckets.
 
 - Add `required_version` to `terraform {}` in `provider.tf` to avoid version
   mismatches in CI and local environments (example: `required_version = "~> 1.3"`).
