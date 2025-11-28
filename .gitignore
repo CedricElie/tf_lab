@@ -1,0 +1,35 @@
+# Local .terraform directory
+.terraform/
+
+# Terraform state files
+*.tfstate
+*.tfstate.backup
+
+# Exclude tfvars files which may contain sensitive values
+terraform.tfvars
+*.tfvars
+*.tfvars.json
+
+# Crash logs
+crash.log
+
+# Local override files
+override.tf
+override.tf.json
+*_override.tf
+
+# Keys and credential files
+*.key
+*.key.json
+*.pem
+*.p12
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

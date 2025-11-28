@@ -34,7 +34,7 @@ cache:
     
     # 3. Initialization and Change Directory
     cd $TF_ROOT
-    terraform init -backend=true
+    # NOTE: `terraform init` runs in jobs that require it.
 
   after_script: | # Use after_script for cleanup, making it tolerant
     # Cleanup: Use 'rm -f' to suppress error if file is already gone
@@ -42,11 +42,52 @@ cache:
 
 # 🔑 Stage: tf_setup
 
+# Job: Ensure GCS backend exists before running Terraform init
+ensure_backend_exists:
+  extends: .terraform_setup
+  stage: tf_setup
+  before_script: | # Run normal setup steps but don't init here
+    which terraform || { echo "ERROR: Terraform not found in PATH. Aborting."; exit 1; }
+    which gcloud || { echo "ERROR: Google Cloud CLI not found in PATH. Aborting."; exit 1; }
+    cat $GCP_SA_KEY_FILE > $GCP_SA_KEY_FILE_PATH
+    export GOOGLE_APPLICATION_CREDENTIALS=$GCP_SA_KEY_FILE_PATH
+    gcloud auth activate-service-account --key-file=$GCP_SA_KEY_FILE_PATH
+    cd $TF_ROOT
+  script:
+    - set -euo pipefail
+    - |
+      # Determine project ID (prioritize TF var, then SA JSON content)
+      PROJECT_ID=${TF_VAR_project:-}
+      if [ -z "${PROJECT_ID:-}" ]; then
+        if command -v python3 >/dev/null 2>&1; then
+          PROJECT_ID=$(python3 -c "import json,sys;print(json.load(open('$GCP_SA_KEY_FILE_PATH')).get('project_id',''))")
+        else
+          echo "ERROR: TF_VAR_project unset and python3 not available to read the service account project_id"; exit 1
+        fi
+      fi
+      REGION=${TF_VAR_region:-"europe-west9"}
+      BACKEND_BUCKET="ocp-on-gcp-476018-tfstate"
+      echo "Using project: ${PROJECT_ID}, region: ${REGION}, backend: ${BACKEND_BUCKET}"
+      if gsutil ls -b gs://$BACKEND_BUCKET >/dev/null 2>&1; then
+        echo "Backend bucket gs://$BACKEND_BUCKET already exists."
+      else
+        echo "Backend bucket gs://$BACKEND_BUCKET does not exist. Creating..."
+        gsutil mb -p ${PROJECT_ID} -l ${REGION} -c STANDARD gs://$BACKEND_BUCKET
+        # Enforce uniform bucket-level access and disable public access
+        gsutil uniformbucketlevelaccess set on gs://$BACKEND_BUCKET || true
+        echo "Backend bucket gs://$BACKEND_BUCKET created and configured."
+      fi
+  rules:
+    - when: always
+
 initialize_backend:
   extends: .terraform_setup
   stage: tf_setup
+  needs:
+    - ensure_backend_exists
   script:
-    - echo "Terraform backend initialized and providers downloaded."
+    - echo "Initialize Terraform backend and providers"
+    - terraform init -backend=true
   rules:
     - when: always
 
